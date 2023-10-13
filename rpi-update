@@ -408,6 +408,7 @@ function update_firmware {
 		fi
 		if [[ ${WANT_PI5} -eq 1 ]]; then
 			[[ -e "${FW_REPOLOCAL}/"kernel_2712.img ]] && cp "${FW_REPOLOCAL}/"kernel_2712.img "${FW_PATH}/"
+			[[ -e "${FW_REPOLOCAL}/"kernel2712.img ]] && cp "${FW_REPOLOCAL}/"kernel2712.img "${FW_PATH}/"kernel_2712.img
 		fi
 		if [[ -n $(shopt -s nullglob; echo "${FW_REPOLOCAL}/"*.dtb*) ]]; then
 			cp "${FW_REPOLOCAL}/"*.dtb* "${FW_PATH}/"
