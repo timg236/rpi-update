@@ -15,6 +15,10 @@ REPO_URI=${REPO_URI:-"https://github.com/raspberrypi/rpi-firmware"}
 REPO_API_URI=${REPO_URI/github.com/api.github.com\/repos}
 REPO_CONTENT_URI=${REPO_URI/github.com/raw.githubusercontent.com}
 
+BOOTLOADER_REPO_URI=${BOOTLOADER_REPO_URI:-"https://github.com/raspberrypi/rpi-eeprom"}
+BOOTLOADER_REPO_API_URI=${BOOTLOADER_REPO_URI/github.com/api.github.com\/repos}
+BOOTLOADER_REPO_CONTENT_URI=${BOOTLOADER_REPO_URI/github.com/raw.githubusercontent.com}
+
 UPDATE_SELF=${UPDATE_SELF:-1}
 UPDATE_REPO_URI="https://github.com/raspberrypi/rpi-update"
 UPDATE_REPO_CONTENT_URI=${UPDATE_REPO_URI/github.com/raw.githubusercontent.com}
@@ -55,6 +59,7 @@ else
 fi
 WORK_PATH=${WORK_PATH:-"${ROOT_PATH}/root"}
 SKIP_KERNEL=${SKIP_KERNEL:-}
+SKIP_BOOTLOADER=${SKIP_BOOTLOADER:-1}
 SKIP_FIRMWARE=${SKIP_FIRMWARE:-0}
 SKIP_SDK=${SKIP_SDK:-0}
 SKIP_VCLIBS=${SKIP_VCLIBS:-0}
@@ -79,6 +84,8 @@ FW_MODPATH="${ROOT_PATH}/lib/modules"
 FW_REV_IN=${1:-""}
 FW_REVFILE="${FW_PATH}/.firmware_revision"
 SELFUPDATE_SCRIPT="${WORK_PATH}/.updateScript.sh"
+BOOTLOADER_REV_IN=${2:-""}
+BOOTLOADER_REVFILE="${FW_PATH}/.bootloader_revision"
 
 [ "${RPI_UPDATE_UNSUPPORTED}" -ne 0 ] && echo -e "You appear to be trying to update firmware on an incompatible distribution. To force update, run the following:\nsudo -E RPI_UPDATE_UNSUPPORTED=0 rpi-update" && exit 1
 
@@ -138,7 +145,7 @@ function update_self() {
 	cat > "${SELFUPDATE_SCRIPT}" << EOF
 	if mv "${_tempFileName}" "$0"; then
 		rm -- "\$0"
-		exec env UPDATE_SELF=0 /bin/bash "$0" "${FW_REV_IN}"
+		exec env UPDATE_SELF=0 /bin/bash "$0" "${FW_REV_IN}" "${BOOTLOADER_REV_IN}"
 	else
 		echo " !!! Failed!"
 	fi
@@ -233,70 +240,60 @@ function update_sdk {
 	fi
 }
 
-# Check if the bootloader is older than the latest critical release. An old
-# bootloader shouldn't block rpi-update so just inform the user that bootloader
-# is out of date.
-function check_eeprom_version {
-	local CURRENT_VERSION=""
-	local FIRST_VERSION=1557513636
-	# MIN VERSION for Sep 10 2019 EEPROM
-	local MIN_VERSION=1568112110
-	local HAVE_BOOTLOADER_EEPROM=0
-
-	# Skip EEPROM check if vcgencmd is missing because it won't be possible to
-	# check the version.
-	if ! command -v vcgencmd > /dev/null; then
-		return
-	fi
-
-	rev=
-	if [ -f /proc/cpuinfo ]; then
-		rev="$(sed -n '/^Revision/s/^.*: \(.*\)/\1/p' < /proc/cpuinfo)"
-	fi
-
-	if [ -n $rev ] && [ $(((0x$rev >> 23) & 1)) -ne 0 ] && [ $(((0x$rev >> 12) & 15)) -eq 3 ]; then
-		HAVE_BOOTLOADER_EEPROM=1
-	fi
-
-	if [ "${HAVE_BOOTLOADER_EEPROM}" != 1 ]; then
-		return
-	fi
-
-	# vcgencmd doesn't return non-zero for unknown commands.
-	if vcgencmd bootloader_config | grep -qi "Command not registered"; then
-		# Firmware is too old to return the bootloader config
-		return
-	fi
-
-	# If FREEZE_VERSION is specified then assume that the user doesn't want
-	# an EEPROM update so skip the check.
-	if vcgencmd bootloader_config | grep -q FREEZE_VERSION=1; then
-		return
-	fi
-
-	if vcgencmd bootloader_version | grep -q timestamp; then
-		CURRENT_VERSION=$(vcgencmd bootloader_version | grep timestamp | awk '{print $2}')
-		if [ "${CURRENT_VERSION}" = "0" ]; then
-			# If a timestamp of zero is returned then it's new firmware but an
-			# old bootloader. Assume bootloader v0
-			CURRENT_VERSION="${FIRST_VERSION}"
+function download_bootloader_tools {
+	for tool in rpi-eeprom-update rpi-eeprom-config rpi-eeprom-digest; do
+		temp="$(mktemp)"
+		if ! eval curl -fs ${CURL_OPTIONS} "${BOOTLOADER_REPO_CONTENT_URI}/${BOOTLOADER_REV}/${tool}" --output "${temp}"; then
+			echo " !!! Failed to download ${tool}"
+			rm -rf "${temp}"
+			exit 1
 		fi
-	elif vcgencmd bootloader_version | grep -qi "unknown"; then
-		return
-	else
-		# New bootloader / old firmware ? Try to parse the date
-		CURRENT_VERSION=$(date -u +%s --date "$(vcgencmd bootloader_version | head -n1)")
-	fi
+		mv "${temp}" "/usr/bin/${tool}"
+		chmod a+rx "/usr/bin/${tool}"
+	done
+}
 
-	# Failed to parse the version. Default to the initial production release.
-	if [ -z "${CURRENT_VERSION}" ]; then
-		CURRENT_VERSION="${FIRST_VERSION}"
+function download_bootloader_images {
+	bcm_chip=$1
+	latest_eeprom=$(eval curl -fs ${CURL_OPTIONS} ${BOOTLOADER_REPO_API_URI}/git/trees/master?recursive=1 | grep "firmware-${bcm_chip}/latest/pieeprom" | sed 's/.*\(pieeprom.*\)".*/\1/' | sort -r | head -n1)
+	if [[ -n "${latest_eeprom}" ]]; then
+		fw_path="/lib/firmware/raspberrypi/bootloader-${bcm_chip}/latest"
+		if [[ ! -d "${fw_path}" ]]; then
+			echo "Path ${fw_path} not found. Please install the rpi-eeprom package first"
+			return
+		fi
+		if [[ ! -f "${fw_path}/${latest_eeprom}" ]]; then
+			eeprom_temp="$(mktemp)"
+			if ! eval curl -fs ${CURL_OPTIONS} "${BOOTLOADER_REPO_CONTENT_URI}/${BOOTLOADER_REV}/firmware-${bcm_chip}/latest/${latest_eeprom}" --output "${eeprom_temp}"; then
+				echo " !!! Failed to download firmware-${bcm_chip}/${latest_eeprom}"
+				rm -rf "${temp}"
+				exit 1
+			fi
+			mv "${eeprom_temp}" "${fw_path}/${latest_eeprom}"
+			chmod a+r "${fw_path}/${latest_eeprom}"
+		fi
 	fi
+}
 
-	if [ "${CURRENT_VERSION}" -lt "${MIN_VERSION}" ]; then
-		echo "A newer bootloader EEPROM version is available."
-		echo "On Debian, try: sudo apt update; sudo apt install rpi-eeprom"
-		echo "then reboot to install the new bootloader"
+function download_bootloader {
+	if [[ ${SKIP_BOOTLOADER} -eq 0 ]]; then
+		echo "Downloadng bootloader tools"
+		download_bootloader_tools
+
+		echo "Downloading bootloader images"
+		if [[ "${WANT_PI4}" -eq 1 ]]; then
+			download_bootloader_images 2711
+		fi
+		if [[ "${WANT_PI5}" -eq 1 ]]; then
+			download_bootloader_images 2712
+		fi
+	fi
+}
+
+function update_bootloader {
+	if [[ ${SKIP_BOOTLOADER} -eq 0 ]]; then
+		sed /etc/default/rpi-eeprom-update -i -e "s/^FIRMWARE_RELEASE_STATUS.*/FIRMWARE_RELEASE_STATUS=\"latest\"/"
+		rpi-eeprom-update -a
 	fi
 }
 
@@ -455,6 +452,7 @@ function finalise {
 	fi
 	echo " *** Storing current firmware revision"
 	echo "${FW_REV}" > "${FW_REVFILE}"
+	echo "${BOOTLOADER_REV}" > "${BOOTLOADER_REVFILE}"
 }
 
 function do_backup {
@@ -509,13 +507,14 @@ function do_update {
 		check_partition 256
 	fi
 	check_initramfs
-	check_eeprom_version
 	show_notice
+        download_bootloader
 	download_rev
 	if [[ -f "${FW_REPOLOCAL}/pre-install" ]]; then
 		echo " *** Running pre-install script"
 		source "${FW_REPOLOCAL}/pre-install"
 	fi
+	update_bootloader
 	update_firmware
 	update_modules
 	update_vc_libs
@@ -640,7 +639,7 @@ function compare_hashes {
 
 function get_long_hash {
 	# ask github for long version hash
-	local COMMITS_URI=${REPO_API_URI}/commits/$1
+	local COMMITS_URI=${1}/commits/$2
 	eval curl ${CURL_OPTIONS_API} -s ${CURL_OPTIONS} "${COMMITS_URI}" | awk 'BEGIN {hash=""} { if (hash == "" && $1 == "\"sha\":") {hash=substr($2, 2, 40);} } END {print hash}'
 }
 
@@ -688,14 +687,23 @@ if [[ "${FW_REV_IN}" == "" ]]; then
 	FW_REV_IN=${BRANCH}
 fi
 
+if [[ "${BOOTLOADER_REV_IN}" == "" ]]; then
+	BOOTLOADER_REV_IN=${BRANCH}
+fi
+
 ARTIFACT=""
 BUILD=""
 FW_REV=""
+BOOTLOADER_REV=""
 if [[ ${FW_REV_IN} != http* ]] && [[ ! -f ${FW_REV_IN} ]]; then
-	FW_REV=$(get_long_hash "${FW_REV_IN}")
+	FW_REV=$(get_long_hash "${REPO_API_URI}" "${FW_REV_IN}")
 fi
 
 echo FW_REV:$FW_REV
+
+if [[ ${BOOTLOADER_REV_IN} != http* ]] && [[ ! -f ${BOOTLOADER_REV_IN} ]]; then
+	BOOTLOADER_REV=$(get_long_hash "${BOOTLOADER_REPO_API_URI}" "${BOOTLOADER_REV_IN}")
+fi
 
 if [[ "${FW_REV}" == "" ]]; then
 	if [[ ${FW_REV_IN} != http* ]] && [[ ! -f ${FW_REV_IN} ]]; then
@@ -735,10 +743,12 @@ if [[ ! -f "${FW_REVFILE}" ]]; then
 else
 	if [[ "${ARTIFACT}" != "" ]]; then
 		LOCAL_HASH=$(cat "${FW_REVFILE}")
+		BOOTLOADER_LOCAL_HASH=$(cat "${BOOTLOADER_REVFILE}")
 	else
-		LOCAL_HASH=$(get_long_hash "$(cat "${FW_REVFILE}")")
+		LOCAL_HASH=$(get_long_hash ${REPO_API_URI} "$(cat "${FW_REVFILE}")")
+		BOOTLOADER_LOCAL_HASH=$(get_long_hash "${BOOTLOADER_REPO_API_URI}"  "$(cat "${BOOTLOADER_REVFILE}")")
 	fi
-	if [[ "${LOCAL_HASH}" == "${FW_REV}" ]]; then
+	if [[ "${LOCAL_HASH}" == "${FW_REV}" ]] && [[ "${BOOTLOADER_LOCAL_HASH}" == "${BOOTLOADER_REV}}" ]] ; then
 		echo " *** Your firmware is already up to date (delete ${FW_REVFILE} to force an update anyway)"
 		exit 0
 	fi
