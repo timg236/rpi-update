@@ -102,6 +102,16 @@ You can disable this behavior by:
 Will update everything **except** the `kernel.img` files and the kernel modules.
 Use with caution, some firmware updates might depend on a kernel update.
 
+#### `SKIP_BOOTLOADER`
+Will update everything except the bootloader EEPROM.
+
+To revert previous updates to the local set of EEPROM binaries run:-
+```
+sudo rm -rf /lib/firmware/raspberrypi/bootloader-2711
+sudo rm -rf /lib/firmware/raspberrypi/bootloader-2712
+sudo apt reinstall rpi-eeprom
+```
+
 #### `SKIP_BACKUP`
 
     sudo SKIP_BACKUP=1 rpi-update
