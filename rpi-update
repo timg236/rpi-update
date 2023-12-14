@@ -264,8 +264,8 @@ function download_bootloader_images {
 		fi
 		if [[ "${BOOTLOADER_REV_IN}" != "master" ]]; then
 			echo "Non default bootloader revision specified (${BOOTLOADER_REV_IN}) deleting local bootloader binaries in ${fw_path}"
-			rm -rf "${fw_path}"
-			mkdir -p "${fw_path}"
+			rm -f "${fw_path}/recovery.bin"
+			rm -f "${fw_path}"/pieeprom*.bin
 		fi
 		if [[ ! -f "${fw_path}/${latest_eeprom}" ]]; then
 			eeprom_temp="$(mktemp)"
