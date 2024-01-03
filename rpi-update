@@ -773,6 +773,15 @@ if [[ "${FW_REV}" == "" ]]; then
 	exit 1
 fi
 
+if [ ! -d "/lib/firmware/raspberrypi/bootloader-2711/latest" ]; then
+	if [[ "${SKIP_BOOTLOADER}" != 1 ]]; then
+		# The chip specific firmware directory structure is required for rpi-eeprom updates
+		# RPi OS Bookworm or newer required.
+		SKIP_BOOTLOADER=1
+		echo "rpi-eeprom firmware package appears to be too old. Skipping bootloader updates"
+	fi
+fi
+
 if [[ ! -f "${FW_REVFILE}" ]]; then
 	LOCAL_HASH=0
 	echo " *** We're running for the first time"
