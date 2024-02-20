@@ -313,6 +313,11 @@ function download_bootloader {
 
 function update_bootloader {
 	if [[ ${SKIP_BOOTLOADER} -eq 0 ]]; then
+		if grep -q "bcm2712" /proc/device-tree/compatible; then
+			# Prefer flashrom on BCM2712. rpi-eeprom-update will failover to recovery.bin
+			# if flashrom is not installed.
+			export RPI_EEPROM_USE_FLASHROM=${RPI_EEPROM_USE_FLASHROM:-1}
+		fi
 		sed /etc/default/rpi-eeprom-update -i -e "s/^FIRMWARE_RELEASE_STATUS.*/FIRMWARE_RELEASE_STATUS=\"latest\"/"
 		if [[ "${BOOTLOADER_REV_IN}" != "master" ]]; then
 			# Use latest according to rpi-eeprom git hash
