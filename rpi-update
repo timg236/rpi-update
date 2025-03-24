@@ -100,7 +100,7 @@ if [[ "$SKIP_KERNEL" == "" ]]; then
 	if command -v vcgencmd > /dev/null; then
 		KERNEL=$(vcgencmd get_config str | grep -E "^kernel=" | cut -d= -f2)
 		case $KERNEL in
-			"" | kernel8.img | kernel_2712.img) ;;
+			"" | kernel8-rt.img | kernel8.img | kernel_2712.img) ;;
 			*) echo -e "You appear to be using a custom kernel file (kernel=$KERNEL in config.txt).\nSkipping installation of new kernel, as bundled dtb files may be incompatible with your kernel." && SKIP_KERNEL=1
 			sleep 1
 		esac
@@ -192,6 +192,11 @@ function update_modules {
 			fi
 			if [[ ${WANT_64BIT} -ne 1 ]]; then
 				if [[ "${VERSION}" == "v8+" ]]; then
+					continue;
+				fi
+			fi
+			if [[ ${WANT_64BIT} -ne 1 ]]; then
+				if [[ "${VERSION}" == "v8-rt+" ]]; then
 					continue;
 				fi
 			fi
@@ -458,6 +463,7 @@ function update_firmware {
 		fi
 		if [[ ${WANT_64BIT} -eq 1 ]]; then
 			[[ -e "${FW_REPOLOCAL}/"kernel8.img ]] && cp "${FW_REPOLOCAL}/"kernel8.img "${FW_PATH}/"
+			[[ -e "${FW_REPOLOCAL}/"kernel8-rt.img ]] && cp "${FW_REPOLOCAL}/"kernel8-rt.img "${FW_PATH}/"
 		fi
 		if [[ ${WANT_PI5} -eq 1 ]]; then
 			[[ -e "${FW_REPOLOCAL}/"kernel_2712.img ]] && cp "${FW_REPOLOCAL}/"kernel_2712.img "${FW_PATH}/"
@@ -536,6 +542,9 @@ function do_update {
 		WANT_32BIT=${WANT_32BIT:-1}
 	fi
 	if [ -f ${FW_PATH}/kernel8.img ]; then
+		WANT_64BIT=${WANT_64BIT:-1}
+	fi
+	if [ -f ${FW_PATH}/kernel8-rt.img ]; then
 		WANT_64BIT=${WANT_64BIT:-1}
 	fi
 	if [ -f ${FW_PATH}/start4.elf ] || [ -f ${BOOT_PATH}/start4.elf ]; then
